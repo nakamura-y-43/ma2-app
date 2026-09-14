@@ -1,0 +1,61 @@
+# 第5回 CI ワークフロー
+# main への push で: テスト → イメージのビルド → Amazon ECR へ push
+#
+# 事前準備（スライド 19〜21 ページ）:
+#   1. IAM に GitHub の OIDC プロバイダを登録する
+#   2. ma2-github-actions-role を作る（信頼ポリシーで自分のリポジトリだけを許可）
+#   3. GitHub リポジトリの Secrets に AWS_ROLE_ARN を登録する
+name: CI
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:        # 手動実行もできるようにしておく
+
+permissions:
+  id-token: write           # OIDC のトークンを発行するために必要
+  contents: read            # リポジトリを読むために必要
+
+env:
+  AWS_REGION: ap-northeast-1
+  ECR_REPOSITORY: ma2-app
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: リポジトリを取得
+        uses: actions/checkout@v4
+
+      - name: Python を用意
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 依存をインストール
+        run: pip install -r app/requirements.txt
+
+      - name: テストを実行
+        working-directory: app
+        run: python -m unittest discover -s tests -v
+
+      - name: AWS の認証（OIDC・アクセスキー不要）
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: ECR にログイン
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: イメージをビルドして push
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}     # コミット SHA をタグにする
+        run: |
+          docker build -t "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
+                       -t "$REGISTRY/$ECR_REPOSITORY:latest" app
+          docker push "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          docker push "$REGISTRY/$ECR_REPOSITORY:latest"
+          echo "push しました: $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
