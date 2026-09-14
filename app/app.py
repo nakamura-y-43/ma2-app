@@ -55,7 +55,7 @@ def add():
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "NG"}
 
 
 if __name__ == "__main__":
